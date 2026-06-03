@@ -74,6 +74,8 @@
         <label>Player (whose inventory to keep)</label>
         <select id="player"></select>
         <p class="small" id="nameHint"></p>
+        <label style="font-weight:500;margin-top:8px"><input type="checkbox" id="online" checked style="width:auto;margin-right:8px;vertical-align:middle">Look up names online</label>
+        <p class="small">Resolves premium (online-mode) accounts via a public API — only the UUID is sent, nothing else. Offline/cracked players won't resolve; use usercache.json for those.</p>
       </div>
       <div>
         <label>World format</label>
@@ -118,11 +120,32 @@ jszip/dist/jszip.min.js:
   const $=id=>document.getElementById(id);
   const td=new TextDecoder();
   const state={files:null,usercache:null,info:null};
+  const nameCache={};   // uuid -> resolved name (usercache or online), kept across re-renders
   let busy=false;
 
   function log(m,cls){const d=document.createElement("div");if(cls)d.className=cls;d.textContent=m;$("log").appendChild(d);$("log").scrollTop=1e9;}
   function status(m,cls){const s=$("status");s.className=cls||"";s.textContent=m;}
   const short=u=>u.replace(/-/g,"").slice(0,8);
+  const uuidVer=u=>u.replace(/-/g,"")[12];          // "4" = premium (online-mode), "3" = offline/cracked
+  function markOption(uuid,text){const sel=$("player");for(const o of sel.options)if(o.value===uuid)o.textContent=text;}
+  async function resolveOnline(uuid){
+    const dl=uuid.replace(/-/g,"");
+    const get=async(url,pick)=>{try{const r=await fetch(url,{headers:{Accept:"application/json"}});if(!r.ok)return null;return pick(await r.json())||null;}catch(e){return null;}};
+    return await get("https://playerdb.co/api/player/minecraft/"+uuid, j=>j&&j.data&&j.data.player&&j.data.player.username)
+        || await get("https://crafthead.net/profile/"+dl,            j=>j&&j.name)
+        || await get("https://api.ashcon.app/mojang/v2/user/"+dl,     j=>j&&j.username);
+  }
+  async function kickOnline(players){
+    if(!$("online").checked||!players)return;
+    for(const p of players){
+      if(p.name||nameCache[p.uuid])continue;
+      if(uuidVer(p.uuid)!=="4"){markOption(p.uuid,"Offline player ("+short(p.uuid)+"…) — needs usercache.json");continue;}
+      markOption(p.uuid,"Looking up "+short(p.uuid)+"…");
+      const n=await resolveOnline(p.uuid);
+      if(n){nameCache[p.uuid]=n;markOption(p.uuid,n);}
+      else markOption(p.uuid,"Unknown player ("+short(p.uuid)+"…) — not found online");
+    }
+  }
 
   // ---- input wiring ----
   const drop=$("drop"),zi=$("zipInput");
@@ -132,6 +155,7 @@ jszip/dist/jszip.min.js:
   ["dragleave","drop"].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove("hot");}));
   drop.addEventListener("drop",e=>{const f=e.dataTransfer.files[0];if(f)loadZip(f);});
   $("cacheInput").onchange=async e=>{const f=e.target.files[0];if(!f)return;state.usercache=await f.text();log("Loaded "+f.name+" for player names.","ok");refresh();};
+  $("online").onchange=()=>{if(state.info)kickOnline(state.info.players);};
 
   async function loadZip(file){
     if(busy)return;busy=true;$("log").textContent="";status("Reading "+file.name+" …");
@@ -165,37 +189,4 @@ jszip/dist/jszip.min.js:
       const sel=$("player");sel.innerHTML="";
       const fresh=document.createElement("option");fresh.value="__fresh__";fresh.textContent="Fresh start — no player data";sel.appendChild(fresh);
       let unresolved=0;
-      info.players.forEach(p=>{const o=document.createElement("option");o.value=p.uuid;
-        o.textContent=p.name?p.name:("Unknown player ("+short(p.uuid)+"…)");if(!p.name)unresolved++;sel.appendChild(o);});
-      sel.value = info.players.length ? info.players[0].uuid : "__fresh__";
-      $("nameHint").textContent = !info.players.length ? "No player data found in this world."
-        : (unresolved? "Tip: add usercache.json above to turn UUIDs into names." : "");
-
-      $("wname").value = (info.levelName||"world");
-      $("panel").style.display="block";status("Loaded. Review options and convert.","ok");
-    }catch(e){status("Error: "+e.message,"er");$("panel").style.display="none";}
-  }
-
-  // ---- convert ----
-  $("go").onclick=async()=>{
-    if(busy||!state.files)return;busy=true;$("go").disabled=true;
-    try{
-      const pv=$("player").value, mode=pv==="__fresh__"?"fresh":"player";
-      const eraOverride=$("fmt").value||undefined;
-      status("Converting … (large worlds take a moment)");
-      const R=await WC.convertWorld(state.files,{mode,playerUuid:mode==="player"?pv:undefined,
-        levelName:$("wname").value,usercacheJson:state.usercache,eraOverride});
-      const zout=new WC.JSZip();
-      for(const[p,b]of Object.entries(R.files))zout.file(p,b);
-      const blob=await zout.generateAsync({type:"blob",compression:"DEFLATE",compressionOptions:{level:6}});
-      const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=R.outName+".zip";
-      document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),4000);
-      log("Wrote "+Object.keys(R.files).length+" files.","ok");
-      status("Done — downloaded \""+R.outName+".zip\". Unzip it into your saves folder.","ok");
-    }catch(e){status("Conversion failed: "+e.message,"er");log(String(e&&e.stack||e),"er");}
-    busy=false;$("go").disabled=false;
-  };
-})();
-</script>
-</body>
-</html>
+      info.players.forEach(p=>{const o=document.createEleme
