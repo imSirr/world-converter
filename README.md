@@ -83,4 +83,4 @@ Disable **Look up names online** to turn those requests off completely. Bedrock 
 
 ## License
 
-MIT
+PolyForm Noncommercial License 1.0.0
